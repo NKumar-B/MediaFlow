@@ -124,9 +124,9 @@ export default function Sidebar({
         <div className="flex flex-col">
           <div className="h-16 flex items-center px-4 border-b border-slate-800/40 justify-between">
             <div className="flex items-center space-x-2">
-              <div className="bg-gradient-to-tr from-purple-500 to-pink-500 p-1.5 rounded-xl">
+              {/* <div className="bg-gradient-to-tr from-purple-500 to-pink-500 p-1.5 rounded-xl">
                 <Flame className="w-5 h-5 text-white" />
-              </div>
+              </div> */}
               {isExpanded && (
                 <span className="text-lg font-black tracking-wider text-slate-100 animate-fade-in">
                   MEDIA<span className="text-purple-400">FLOW</span>

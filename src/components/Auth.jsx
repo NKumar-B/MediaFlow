@@ -1,18 +1,27 @@
-import React, { useState } from 'react';
-import { Mail, Lock, User, Key, ShieldCheck, Flame, Eye, EyeOff } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Mail, Lock, User, Key, ShieldCheck, Flame, Eye, EyeOff, RefreshCcw } from 'lucide-react';
 import emailjs from '@emailjs/browser';
-import { memoryDB } from '../services/db';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, sendPasswordResetEmail } from "firebase/auth";
+import { auth } from '../services/firebase';
+import { toast } from 'sonner';
 
 export default function Auth({ onAuthSuccess }) {
-  const [screen, setScreen] = useState('user-login'); // user-login | user-signup | otp-verify | admin-login
+  const [screen, setScreen] = useState('user-login'); 
   const [signupData, setSignupData] = useState({ name: '', email: '', password: '', confirmPassword: '' });
   const [loginData, setLoginData] = useState({ email: '', password: '' });
   const [adminData, setAdminData] = useState({ username: '', password: '' });
   
+  // Password Reset States
+  const [resetEmail, setResetEmail] = useState('');
+
   const [generatedOtp, setGeneratedOtp] = useState('');
   const [otpInput, setOtpInput] = useState('');
-  const [error, setError] = useState('');
   const [isSendingEmail, setIsSendingEmail] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  // OTP Countdown Timer states
+  const [timer, setTimer] = useState(60);
+  const [canResend, setCanResend] = useState(false);
 
   // Visibility triggers
   const [showLoginPassword, setShowLoginPassword] = useState(false);
@@ -20,118 +29,166 @@ export default function Auth({ onAuthSuccess }) {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [showAdminPassword, setShowAdminPassword] = useState(false);
 
-  // Password Strength Evaluator
+  // Countdown effect
+  useEffect(() => {
+    let intervalId;
+    if (screen === 'otp-verify' && timer > 0) {
+      intervalId = setInterval(() => {
+        setTimer((prev) => prev - 1);
+      }, 1000);
+    } else if (timer === 0) {
+      setCanResend(true);
+    }
+    return () => clearInterval(intervalId);
+  }, [screen, timer]);
+
+  const resetTimerState = () => {
+    setTimer(60);
+    setCanResend(false);
+  };
+
   const checkPasswordStrength = (pwd) => {
-    if (!pwd) return { label: '', color: 'bg-slate-800', width: '0%', text: '' };
+    if (!pwd) return { label: '', color: 'bg-slate-800', width: '0%', text: '', isValid: false };
     const hasAlpha = /[a-zA-Z]/.test(pwd);
     const hasDigits = /\d/.test(pwd);
     const hasSymbols = /[^a-zA-Z0-9]/.test(pwd);
 
     if (hasAlpha && hasSymbols && hasDigits) {
-      return { label: 'Strong', color: 'bg-green-500', width: '100%', text: 'text-green-400' };
+      return { label: 'Strong', color: 'bg-green-500', width: '100%', text: 'text-green-400', isValid: true };
     }
     if (hasAlpha && (hasSymbols || hasDigits)) {
-      return { label: 'Medium', color: 'bg-yellow-500', width: '75%', text: 'text-yellow-400' };
+      return { label: 'Medium', color: 'bg-yellow-500', width: '75%', text: 'text-yellow-400', isValid: false };
     }
-    return { label: 'Weak', color: 'bg-red-500', width: '25%', text: 'text-red-400' };
+    return { label: 'Weak', color: 'bg-red-500', width: '25%', text: 'text-red-400', isValid: false };
   };
 
-  // Sign In Process
+  // 1. Firebase Login Process
   const handleUserLogin = (e) => {
     e.preventDefault();
-    setError('');
-
-    const matchedUser = memoryDB.findUser(loginData.email, loginData.password);
-    if (!matchedUser) {
-      return setError('Invalid email or password.');
+    if (!loginData.email || !loginData.password) {
+      return toast.error('Please enter all login credentials.');
     }
+    setLoading(true);
 
-    onAuthSuccess({ email: matchedUser.email, name: matchedUser.name, role: 'user' });
+    signInWithEmailAndPassword(auth, loginData.email, loginData.password)
+      .then((userCredential) => {
+        setLoading(false);
+        toast.success(`Access granted. Welcome back!`);
+        onAuthSuccess({ 
+          email: userCredential.user.email, 
+          name: userCredential.user.displayName || 'Subscribed User', 
+          avatar: userCredential.user.photoURL || '',
+          role: userCredential.user.email === 'admin@mediaflow.com' ? 'admin' : 'user'
+        });
+      })
+      .catch((err) => {
+        setLoading(false);
+        toast.error(err.message.replace("Firebase: ", ""));
+      });
   };
 
-  // Admin Access Handler
-  const handleAdminLogin = (e) => {
-    e.preventDefault();
-    if (adminData.username === 'admin' && adminData.password === 'admin@123') {
-      setError('');
-      onAuthSuccess({ username: 'admin', role: 'admin' });
-    } else {
-      setError('Invalid admin credentials.');
+  // 2. Send Registration OTP via EmailJS
+  const triggerOtpSend = (e) => {
+    if (e) e.preventDefault();
+    const strength = checkPasswordStrength(signupData.password);
+    
+    if (!strength.isValid) {
+      return toast.warning('Your password must be Strong to proceed.');
     }
-  };
-
-  // Submit Registration & Send OTP via EmailJS
-  const handleSignup = (e) => {
-    e.preventDefault();
     if (signupData.password !== signupData.confirmPassword) {
-      return setError('Passwords do not match.');
+      return toast.error('Passwords do not match.');
     }
 
-    // Check if user exists in our memory database
-    const existingUsers = memoryDB.getAllUsers();
-    if (existingUsers.some(u => u.email === signupData.email)) {
-      return setError('Email address already registered.');
-    }
-
-    setError('');
     setIsSendingEmail(true);
+    resetTimerState();
 
-    // Generate a secure 6-digit verification code
     const secureOtp = Math.floor(100000 + Math.random() * 900000).toString();
     setGeneratedOtp(secureOtp);
 
-    // Prepare payload for your EmailJS template
     const emailPayload = {
       user_name: signupData.name,
       user_email: signupData.email,
       otp_code: secureOtp,
     };
 
-    // Replace these placeholders with your actual EmailJS IDs
-    emailjs.send(
-      'service_xn7geqp', 
-      'template_f0os8mp', 
-      emailPayload, 
-      'niwqNcjwgLygVv1LW'
-    )
+    emailjs.send('service_xn7geqp', 'template_f0os8mp', emailPayload, 'niwqNcjwgLygVv1LW')
     .then(() => {
       setIsSendingEmail(false);
+      toast.success('Verification code sent to your inbox.');
       setScreen('otp-verify');
     })
-    .catch((err) => {
+    .catch(() => {
       setIsSendingEmail(false);
-      // Fallback: If EmailJS fails or keys are missing, display the code so you can still test it.
-      setError(`Notice: Email couldn't be sent. Use the test code: ${secureOtp}`);
+      toast.info(`Local fallback enabled: Use test code ${secureOtp}`);
       setScreen('otp-verify');
     });
   };
 
-  // Complete Registration validation
+  // 3. Match OTP and complete signup
   const handleOtpVerify = (e) => {
     e.preventDefault();
-    if (otpInput.trim() === generatedOtp) {
-      setError('');
-      
-      // Save directly to the local memory store
-      memoryDB.insertUser({
-        name: signupData.name,
-        email: signupData.email,
-        password: signupData.password
-      });
+    if (otpInput.trim() !== generatedOtp) {
+      return toast.error('Incorrect verification code. Please try again.');
+    }
 
-      onAuthSuccess({ name: signupData.name, email: signupData.email, role: 'user' });
+    setLoading(true);
+    createUserWithEmailAndPassword(auth, signupData.email, signupData.password)
+      .then(async (userCredential) => {
+        await updateProfile(userCredential.user, { displayName: signupData.name });
+        setLoading(false);
+        toast.success('Registration complete! Welcome to MediaFlow.');
+        onAuthSuccess({ 
+          email: userCredential.user.email, 
+          name: signupData.name, 
+          avatar: '',
+          role: 'user' 
+        });
+      })
+      .catch((err) => {
+        setLoading(false);
+        setScreen('user-signup');
+        toast.error(err.message.replace("Firebase: ", ""));
+      });
+  };
+
+  // 4. Send Password Reset Email Directly via Firebase
+  const handleForgotPassword = (e) => {
+    e.preventDefault();
+    if (!resetEmail.trim()) {
+      return toast.error('Please enter your registered email address.');
+    }
+
+    setLoading(true);
+    sendPasswordResetEmail(auth, resetEmail.trim())
+      .then(() => {
+        setLoading(false);
+        toast.success('A secure password reset link has been dispatched to your email.');
+        setScreen('user-login');
+        setResetEmail('');
+      })
+      .catch((err) => {
+        setLoading(false);
+        toast.error(err.message.replace("Firebase: ", ""));
+      });
+  };
+
+  const handleAdminLogin = (e) => {
+    e.preventDefault();
+    if (adminData.username === 'admin' && adminData.password === 'admin@123') {
+      toast.success('Admin Hub session established.');
+      onAuthSuccess({ username: 'admin', role: 'admin' });
     } else {
-      setError('Incorrect verification code. Please try again.');
+      toast.error('Invalid administrative credentials.');
     }
   };
 
-  const strength = checkPasswordStrength(signupData.password);
+  const signupStrength = checkPasswordStrength(signupData.password);
 
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col justify-center items-center p-4 select-none font-sans">
       <div className="w-full max-w-md bg-slate-900/40 border border-slate-800/80 backdrop-blur-xl rounded-3xl p-6 md:p-8 shadow-2xl flex flex-col">
         
-        {/* Branding Title Block */}
+        {/* Branding Logo Block */}
         <div className="flex flex-col items-center mb-6">
           <div className="bg-gradient-to-tr from-purple-500 to-pink-500 p-3 rounded-2xl mb-3 shadow-lg">
             <Flame className="w-8 h-8 text-white" />
@@ -139,14 +196,8 @@ export default function Auth({ onAuthSuccess }) {
           <h1 className="text-3xl font-black bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent tracking-widest leading-none">
             MEDIA<span className="text-purple-400">FLOW</span>
           </h1>
-          <p className="text-xs text-slate-500 mt-2 font-medium">Cloud Memory Portal</p>
+          <p className="text-xs text-slate-500 mt-2 font-medium">Secure Cloud Authentication</p>
         </div>
-
-        {error && (
-          <div className="bg-red-500/10 border border-red-500/30 text-red-300 p-3 rounded-xl text-xs mb-4 text-center font-medium">
-            {error}
-          </div>
-        )}
 
         {/* --- USER LOGIN VIEW --- */}
         {screen === 'user-login' && (
@@ -173,11 +224,7 @@ export default function Auth({ onAuthSuccess }) {
                 onChange={(e) => setLoginData({ ...loginData, password: e.target.value })}
                 required 
               />
-              <button 
-                type="button" 
-                onClick={() => setShowLoginPassword(!showLoginPassword)} 
-                className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
-              >
+              <button type="button" onClick={() => setShowLoginPassword(!showLoginPassword)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
                 {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
@@ -185,10 +232,13 @@ export default function Auth({ onAuthSuccess }) {
               Sign In to Account
             </button>
             <div className="flex flex-col gap-3 text-center mt-3">
-              <button type="button" onClick={() => { setScreen('user-signup'); setError(''); }} className="text-xs text-slate-400 hover:text-purple-400 transition font-medium">
+              <button type="button" onClick={() => setScreen('user-signup')} className="text-xs text-slate-400 hover:text-purple-400 transition font-medium">
                 Create new user account
               </button>
-              <button type="button" onClick={() => { setScreen('admin-login'); setError(''); }} className="text-xs text-slate-500 hover:text-slate-300 font-semibold underline underline-offset-4 transition">
+              <button type="button" onClick={() => setScreen('forgot-password')} className="text-xs text-slate-500 hover:text-slate-300 transition font-medium underline underline-offset-4">
+                Forgot Password?
+              </button>
+              <button type="button" onClick={() => setScreen('admin-login')} className="text-xs text-slate-500 hover:text-slate-300 font-semibold underline underline-offset-4 transition">
                 Go to Admin Portal
               </button>
             </div>
@@ -197,7 +247,7 @@ export default function Auth({ onAuthSuccess }) {
 
         {/* --- USER SIGNUP VIEW --- */}
         {screen === 'user-signup' && (
-          <form onSubmit={handleSignup} className="flex flex-col gap-3 animate-fade-in">
+          <form onSubmit={triggerOtpSend} className="flex flex-col gap-3 animate-fade-in">
             <h2 className="text-lg font-bold text-slate-200 tracking-wide text-center">User Registration</h2>
             <div className="relative">
               <User className="w-4 h-4 text-slate-500 absolute left-4 top-1/2 -translate-y-1/2" />
@@ -222,7 +272,6 @@ export default function Auth({ onAuthSuccess }) {
               />
             </div>
             
-            {/* Real-time View/Hide Password Trigger */}
             <div className="relative">
               <Lock className="w-4 h-4 text-slate-500 absolute left-4 top-1/2 -translate-y-1/2" />
               <input 
@@ -238,15 +287,14 @@ export default function Auth({ onAuthSuccess }) {
               </button>
             </div>
 
-            {/* Dynamic Strength Color-fill Meter */}
             {signupData.password && (
               <div className="px-1 flex flex-col gap-1.5 transition-all duration-300">
                 <div className="flex justify-between items-center">
                   <span className="text-[10px] font-bold text-slate-400">Password strength:</span>
-                  <span className={`text-[10px] font-black tracking-wide ${strength.text}`}>{strength.label}</span>
+                  <span className={`text-[10px] font-black tracking-wide ${signupStrength.text}`}>{signupStrength.label}</span>
                 </div>
                 <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                  <div className={`h-full transition-all duration-500 ${strength.color}`} style={{ width: strength.width }}></div>
+                  <div className={`h-full transition-all duration-500 ${signupStrength.color}`} style={{ width: signupStrength.width }}></div>
                 </div>
               </div>
             )}
@@ -266,16 +314,16 @@ export default function Auth({ onAuthSuccess }) {
               </button>
             </div>
 
-            <button type="submit" disabled={isSendingEmail} className="w-full bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 text-white font-bold py-3.5 rounded-xl transition shadow-lg text-sm tracking-wide mt-2">
+            <button type="submit" disabled={isSendingEmail} className="w-full bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 text-white font-bold py-3.5 rounded-xl transition shadow-lg text-sm mt-2">
               {isSendingEmail ? 'Sending code...' : 'Proceed to OTP Verification'}
             </button>
-            <button type="button" onClick={() => { setScreen('user-login'); setError(''); }} className="text-xs text-slate-400 hover:text-purple-400 mt-1 transition text-center font-medium">
+            <button type="button" onClick={() => setScreen('user-login')} className="text-xs text-slate-400 hover:text-purple-400 mt-1 transition text-center font-medium">
               Existing user? Login
             </button>
           </form>
         )}
 
-        {/* --- OTP VIEW --- */}
+        {/* --- OTP VIEW WITH TIMER --- */}
         {screen === 'otp-verify' && (
           <form onSubmit={handleOtpVerify} className="flex flex-col gap-4 animate-fade-in text-center">
             <div className="flex justify-center">
@@ -284,7 +332,12 @@ export default function Auth({ onAuthSuccess }) {
               </div>
             </div>
             <h2 className="text-lg font-bold text-slate-200 tracking-wide">OTP Verification</h2>
-            <p className="text-xs text-slate-400 max-w-xs mx-auto">We've sent a code via EmailJS to your account. Enter the 6-digit code to complete registration.</p>
+            <p className="text-xs text-slate-400 max-w-xs mx-auto">We've sent a code via EmailJS to your account.</p>
+            
+            <div className="text-xs font-mono text-purple-400 mt-1">
+              {timer > 0 ? `Code expires in: ${timer}s` : "Code expired"}
+            </div>
+
             <div className="relative">
               <Key className="w-4 h-4 text-slate-500 absolute left-4 top-1/2 -translate-y-1/2" />
               <input 
@@ -297,11 +350,50 @@ export default function Auth({ onAuthSuccess }) {
                 required 
               />
             </div>
-            <button type="submit" className="w-full bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 text-white font-bold py-3.5 rounded-xl transition shadow-lg text-sm tracking-wide">
-              Complete Validation
+            <button type="submit" disabled={loading} className="w-full bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 text-white font-bold py-3.5 rounded-xl transition shadow-lg text-sm tracking-wide">
+              {loading ? 'Creating account...' : 'Complete Registration'}
             </button>
-            <button type="button" onClick={() => { setScreen('user-signup'); setError(''); }} className="text-xs text-slate-400 hover:text-purple-400 mt-1 font-medium">
+
+            <button 
+              type="button" 
+              onClick={triggerOtpSend} 
+              disabled={!canResend || isSendingEmail}
+              className={`text-xs flex items-center justify-center gap-2 mt-1 self-center ${
+                canResend ? 'text-purple-400 hover:text-purple-300 font-bold cursor-pointer' : 'text-slate-600 cursor-not-allowed'
+              }`}
+            >
+              <RefreshCcw className={`w-3 h-3 ${isSendingEmail ? 'animate-spin' : ''}`} />
+              <span>{isSendingEmail ? 'Sending...' : 'Resend Code'}</span>
+            </button>
+            <button type="button" onClick={() => setScreen('user-signup')} className="text-xs text-slate-400 hover:text-purple-400 mt-1 font-medium">
               Back to registration
+            </button>
+          </form>
+        )}
+
+        {/* --- FORGOT PASSWORD NATIVE EMAIL LINK FLOW --- */}
+        {screen === 'forgot-password' && (
+          <form onSubmit={handleForgotPassword} className="flex flex-col gap-4 animate-fade-in">
+            <div className="flex flex-col text-center gap-1">
+              <h2 className="text-lg font-bold text-slate-200 tracking-wide">Forgot Password</h2>
+              <p className="text-xs text-slate-400 max-w-xs mx-auto">Enter your registered email address below. We'll send you a link to reset your password safely.</p>
+            </div>
+            <div className="relative">
+              <Mail className="w-4 h-4 text-slate-500 absolute left-4 top-1/2 -translate-y-1/2" />
+              <input 
+                type="email" 
+                placeholder="Account email address"
+                className="w-full bg-slate-950/60 border border-slate-800/80 rounded-xl py-3.5 pl-12 pr-4 text-sm text-slate-200 focus:outline-none focus:border-purple-500 transition"
+                value={resetEmail}
+                onChange={(e) => setResetEmail(e.target.value)}
+                required 
+              />
+            </div>
+            <button type="submit" disabled={loading} className="w-full bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 text-white font-bold py-3.5 rounded-xl transition shadow-lg text-sm tracking-wide">
+              {loading ? 'Sending link...' : 'Dispatch Reset Email'}
+            </button>
+            <button type="button" onClick={() => setScreen('user-login')} className="text-xs text-slate-400 hover:text-purple-400 transition text-center font-medium">
+              Back to Login
             </button>
           </form>
         )}
@@ -338,7 +430,7 @@ export default function Auth({ onAuthSuccess }) {
             <button type="submit" className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3.5 rounded-xl transition shadow-lg text-sm">
               Access Admin Portal
             </button>
-            <button type="button" onClick={() => { setScreen('user-login'); setError(''); }} className="text-xs text-slate-400 hover:text-purple-400 mt-2 transition text-center font-medium">
+            <button type="button" onClick={() => setScreen('user-login')} className="text-xs text-slate-400 hover:text-purple-400 mt-2 transition text-center font-medium">
               Back to User Mode
             </button>
           </form>
