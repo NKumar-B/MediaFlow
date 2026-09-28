@@ -1,6 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { onAuthStateChanged, signOut, updateProfile } from "firebase/auth";
-import { auth } from './services/firebase';
+import { collection, onSnapshot, addDoc, deleteDoc, doc } from "firebase/firestore";
+import { auth, db } from './services/firebase';
+import { 
+  saveMediaFileToStorage, 
+  getMediaFileFromStorage, 
+  deleteMediaFileFromStorage 
+} from './services/mediaStorage';
 import { Toaster, toast } from 'sonner';
 import Auth from './components/Auth';
 import Sidebar from './components/Sidebar';
@@ -11,8 +17,9 @@ import AdminUploadForm from './components/AdminUploadForm';
 import MediaControlPlayer from './components/MediaControlPlayer';
 
 const initialMedia = [
-  { id: 1, title: "Midnight Echoes", artist: "Luna Shadows", category: "Romantic", type: "music", url: "src/assets/music/midnight.mp3", thumbnail: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=500" },
-  { id: 2, title: "The Silent Forest", artist: "Director Hayes", category: "Thriller", type: "movie", url: "src/assets/movies/silent_forest.mp4", thumbnail: "https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=500" },
+  { id: 1, title: "Midnight Echoes", artist: "Luna Shadows", category: "Romantic", type: "music", url: "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=lofi-study-112191.mp3", thumbnail: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=500" },
+  { id: 2, title: "The Silent Forest", artist: "Director Hayes", category: "Thriller", type: "movie", url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4", thumbnail: "https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=500" },
+  { id: 3, title: "Electric Dreams", artist: "Syntax Error", category: "Comedy", type: "music", url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3", thumbnail: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=500" },
 ];
 
 const categories = ["All", "Action", "Comedy", "Thriller", "Romantic", "Drama"];
@@ -37,7 +44,53 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isShuffle, setIsShuffle] = useState(false);
 
-  // 🛠️ Updated Cloud-Only State Listener
+  // 🛠️ Hydrate Stored Local Files from IndexedDB on Startup so URLs never break on page refresh!
+  useEffect(() => {
+    const hydratePersistentFiles = async () => {
+      const storedData = localStorage.getItem('MF_STORED_MEDIA');
+      const baseList = storedData ? JSON.parse(storedData) : initialMedia;
+
+      const hydrated = await Promise.all(
+        baseList.map(async (item) => {
+          if (item.hasStoredFile || item.id) {
+            const restoredUrl = await getMediaFileFromStorage(item.id);
+            if (restoredUrl) {
+              return { ...item, url: restoredUrl };
+            }
+          }
+          return item;
+        })
+      );
+      setMediaList(hydrated);
+    };
+
+    hydratePersistentFiles();
+  }, []);
+
+  // 🛠️ Realtime Firebase Firestore Cloud Sync
+  useEffect(() => {
+    try {
+      const unsubscribe = onSnapshot(collection(db, "media"), (snapshot) => {
+        if (!snapshot.empty) {
+          const cloudItems = snapshot.docs.map((d) => ({ firestoreId: d.id, ...d.data() }));
+          setMediaList((prev) => {
+            const mergedMap = new Map();
+            prev.forEach((item) => mergedMap.set(String(item.id), item));
+            cloudItems.forEach((item) => mergedMap.set(String(item.id), item));
+            return Array.from(mergedMap.values());
+          });
+        }
+      }, () => {
+        // Fallback gracefully if Firestore not initialized yet
+      });
+
+      return () => unsubscribe();
+    } catch (e) {
+      // Ignore
+    }
+  }, []);
+
+  // 🛠️ Cloud-Only State Listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
@@ -89,7 +142,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('MF_STORED_MEDIA', JSON.stringify(mediaList));
+    const serializableList = mediaList.map(({ fileObj, ...rest }) => rest);
+    localStorage.setItem('MF_STORED_MEDIA', JSON.stringify(serializableList));
   }, [mediaList]);
 
   const handleAuthSuccess = (user) => {
@@ -142,24 +196,84 @@ export default function App() {
     return matchesSearch && matchesCategory && matchesTab;
   });
 
-  const handleUpload = (e) => {
+  const handleUpload = async (e) => {
     e.preventDefault();
     if (!newMedia.title || !newMedia.artist) return;
+
+    const itemId = Date.now();
+    let finalUrl = newMedia.url;
+    let hasStoredFile = false;
+
+    // Save uploaded file into browser's persistent IndexedDB storage
+    if (newMedia.fileObj) {
+      const saved = await saveMediaFileToStorage(itemId, newMedia.fileObj);
+      if (saved) {
+        hasStoredFile = true;
+        finalUrl = URL.createObjectURL(newMedia.fileObj);
+      }
+    }
+
     const newItem = {
-      ...newMedia,
-      id: Date.now(),
-      thumbnail: newMedia.thumbnail || "https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=500"
+      id: itemId,
+      title: newMedia.title,
+      artist: newMedia.artist,
+      category: newMedia.category,
+      type: newMedia.type,
+      url: finalUrl || "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
+      thumbnail: newMedia.thumbnail || (newMedia.type === 'music' 
+        ? "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=500" 
+        : "https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=500"),
+      hasStoredFile
     };
+
+    // Try optional Cloud Firestore Sync
+    try {
+      const docRef = await addDoc(collection(db, "media"), {
+        id: newItem.id,
+        title: newItem.title,
+        artist: newItem.artist,
+        category: newItem.category,
+        type: newItem.type,
+        url: newItem.url.startsWith('blob:') ? '' : newItem.url,
+        thumbnail: newItem.thumbnail,
+        createdAt: new Date().toISOString()
+      });
+      newItem.firestoreId = docRef.id;
+    } catch (cloudErr) {
+      // Local storage fallback active
+    }
+
     setMediaList([newItem, ...mediaList]);
     setNewMedia({ title: '', artist: '', category: 'Action', type: 'music', url: '', thumbnail: '' });
+
+    if (hasStoredFile) {
+      toast.success(`"${newItem.title}" saved persistently! It will NOT clear on page refresh.`);
+    } else {
+      toast.success(`"${newItem.title}" published successfully to the system!`);
+    }
   };
 
-  const handleDelete = (id) => {
+  const handleDelete = async (id) => {
+    const itemToDelete = mediaList.find((i) => i.id === id);
+    
+    // Delete from local IndexedDB storage
+    await deleteMediaFileFromStorage(id);
+
+    // Delete from Cloud Firestore if firestoreId present
+    if (itemToDelete?.firestoreId) {
+      try {
+        await deleteDoc(doc(db, "media", itemToDelete.firestoreId));
+      } catch (e) {
+        console.error("Firestore delete error:", e);
+      }
+    }
+
     setMediaList(mediaList.filter(item => item.id !== id));
     if (currentlyPlaying?.id === id) {
       setCurrentlyPlaying(null);
       setIsPlaying(false);
     }
+    toast.success('Content deleted successfully.');
   };
 
   const togglePlayback = (item) => {

@@ -330,7 +330,8 @@
 
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Play, Pause, X, SkipBack, SkipForward, Shuffle, Volume2, VolumeX, Maximize } from 'lucide-react';
+import { Play, Pause, X, SkipBack, SkipForward, Shuffle, Volume2, VolumeX, Maximize, Download } from 'lucide-react';
+import { toast } from 'sonner';
 
 export default function MediaControlPlayer({ 
   currentlyPlaying, 
@@ -356,40 +357,66 @@ export default function MediaControlPlayer({
     setDuration(0);
   }, [currentlyPlaying?.id]);
 
-  // Sync Audio Playback
+  // Load new audio source whenever track ID or URL changes
+  useEffect(() => {
+    if (audioRef.current && currentlyPlaying?.type === 'music') {
+      try {
+        audioRef.current.load();
+        if (isPlaying) {
+          const promise = audioRef.current.play();
+          if (promise !== undefined) {
+            promise.catch((err) => {
+              console.warn("Audio autoplay blocked by browser policy:", err);
+            });
+          }
+        }
+      } catch (err) {
+        console.error("Audio load error:", err);
+      }
+    }
+  }, [currentlyPlaying?.id, currentlyPlaying?.url]);
+
+  // Load new video source whenever movie ID or URL changes
+  useEffect(() => {
+    if (videoRef.current && currentlyPlaying?.type === 'movie') {
+      try {
+        videoRef.current.load();
+        if (isPlaying) {
+          const promise = videoRef.current.play();
+          if (promise !== undefined) {
+            promise.catch((err) => {
+              console.warn("Video autoplay blocked by browser policy:", err);
+            });
+          }
+        }
+      } catch (err) {
+        console.error("Video load error:", err);
+      }
+    }
+  }, [currentlyPlaying?.id, currentlyPlaying?.url]);
+
+  // Sync play/pause state and volume mute toggles
   useEffect(() => {
     if (audioRef.current && currentlyPlaying?.type === 'music') {
       audioRef.current.muted = isMuted;
       if (isPlaying) {
-        // Safe check: Wait for the file to load before calling .play()
-        const playPromise = audioRef.current.play();
-        if (playPromise !== undefined) {
-          playPromise.catch((err) => {
-            console.warn("Audio playback paused or blocked by browser policies:", err);
-          });
-        }
+        audioRef.current.play().catch(() => {});
       } else {
         audioRef.current.pause();
       }
     }
-  }, [isPlaying, currentlyPlaying?.id, currentlyPlaying?.url, isMuted]);
+  }, [isPlaying, isMuted]);
 
-  // Sync Video Playback
   useEffect(() => {
     if (videoRef.current && currentlyPlaying?.type === 'movie') {
       videoRef.current.muted = isMuted;
       if (isPlaying) {
-        const playPromise = videoRef.current.play();
-        if (playPromise !== undefined) {
-          playPromise.catch((err) => {
-            console.warn("Video playback paused or blocked by browser policies:", err);
-          });
-        }
+        videoRef.current.play().catch(() => {});
       } else {
         videoRef.current.pause();
       }
     }
-  }, [isPlaying, currentlyPlaying?.id, currentlyPlaying?.url, isMuted]);
+  }, [isPlaying, isMuted]);
 
   const handleTimeUpdate = (ref) => {
     if (ref.current) {
@@ -401,6 +428,12 @@ export default function MediaControlPlayer({
     if (ref.current) {
       setDuration(ref.current.duration);
     }
+  };
+
+  const handleAudioError = () => {
+    console.error("Media error on URL:", currentlyPlaying?.url);
+    toast.error(`Unable to play "${currentlyPlaying?.title}". The media source URL is invalid or blocked.`);
+    setIsPlaying(false);
   };
 
   const handleScrub = (e, ref) => {
@@ -421,6 +454,24 @@ export default function MediaControlPlayer({
     }
   };
 
+  const handleDownloadMedia = (e) => {
+    if (e) e.stopPropagation();
+    if (!currentlyPlaying) return;
+    try {
+      toast.info(`Preparing download for "${currentlyPlaying.title}"...`);
+      const link = document.createElement('a');
+      link.href = currentlyPlaying.url;
+      link.download = `${currentlyPlaying.title.replace(/[^a-z0-9]/gi, '_')}.${currentlyPlaying.type === 'music' ? 'mp3' : 'mp4'}`;
+      link.target = '_blank';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      toast.success(`Started download for "${currentlyPlaying.title}"`);
+    } catch (err) {
+      toast.error(`Unable to download "${currentlyPlaying.title}".`);
+    }
+  };
+
   const formatTime = (timeInSeconds) => {
     if (isNaN(timeInSeconds)) return "0:00";
     const minutes = Math.floor(timeInSeconds / 60);
@@ -438,6 +489,7 @@ export default function MediaControlPlayer({
           ref={audioRef} 
           src={currentlyPlaying.url} 
           onEnded={playNext}
+          onError={handleAudioError}
           onTimeUpdate={() => handleTimeUpdate(audioRef)}
           onLoadedMetadata={() => handleLoadedMetadata(audioRef)}
           className="hidden"
@@ -504,6 +556,9 @@ export default function MediaControlPlayer({
                   </div>
 
                   <div className="flex items-center gap-3">
+                    <button onClick={handleDownloadMedia} title="Download Movie" className="p-2.5 bg-slate-900/80 hover:bg-slate-800 border border-slate-700/50 rounded-full text-slate-300 hover:text-purple-400 transition">
+                      <Download className="w-5 h-5" />
+                    </button>
                     <button onClick={() => setIsMuted(!isMuted)} className="p-2.5 bg-slate-900/80 hover:bg-slate-800 border border-slate-700/50 rounded-full text-slate-300 transition">
                       {isMuted ? <VolumeX className="w-5 h-5 text-red-400" /> : <Volume2 className="w-5 h-5 text-purple-400" />}
                     </button>
@@ -574,6 +629,13 @@ export default function MediaControlPlayer({
           </div>
 
           <div className="flex items-center space-x-3 self-end md:self-auto">
+            <button 
+              onClick={handleDownloadMedia}
+              title="Download Song"
+              className="p-2.5 bg-slate-900 border border-slate-800/80 rounded-full text-slate-400 hover:text-purple-400 hover:bg-slate-800 transition"
+            >
+              <Download className="w-4 h-4" />
+            </button>
             <button 
               onClick={() => setIsMuted(!isMuted)} 
               className="p-2.5 bg-slate-900 border border-slate-800/80 rounded-full text-slate-400 hover:text-purple-400 hover:bg-slate-800 transition"

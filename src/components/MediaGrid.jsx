@@ -1,5 +1,6 @@
 import React from 'react';
-import { Play, Pause, Trash2, Compass } from 'lucide-react';
+import { Play, Pause, Trash2, Compass, Download } from 'lucide-react';
+import { toast } from 'sonner';
 
 export default function MediaGrid({ 
   filteredMedia, 
@@ -9,6 +10,26 @@ export default function MediaGrid({
   currentlyPlaying, 
   isPlaying 
 }) {
+
+  const handleDownload = async (e, item) => {
+    e.stopPropagation();
+    try {
+      toast.info(`Preparing download for "${item.title}"...`);
+      
+      const link = document.createElement('a');
+      link.href = item.url;
+      link.download = `${item.title.replace(/[^a-z0-9]/gi, '_')}.${item.type === 'music' ? 'mp3' : 'mp4'}`;
+      link.target = '_blank';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      toast.success(`Download started for "${item.title}"`);
+    } catch (err) {
+      toast.error(`Unable to download "${item.title}".`);
+    }
+  };
+
   if (filteredMedia.length === 0) {
     return (
       <div className="text-center py-24 border border-dashed border-slate-800/80 rounded-3xl bg-slate-950/10">
@@ -77,6 +98,15 @@ export default function MediaGrid({
               <span className="text-[10px] font-extrabold px-2.5 py-1 rounded-md border border-slate-800/90 bg-slate-950/50 text-slate-400 tracking-wider">
                 {item.category.toUpperCase()}
               </span>
+
+              <button
+                onClick={(e) => handleDownload(e, item)}
+                title={`Download ${item.type}`}
+                className="flex items-center space-x-1.5 px-3 py-1.5 bg-slate-950/60 hover:bg-purple-600/20 border border-slate-800 hover:border-purple-500/40 rounded-xl text-slate-300 hover:text-purple-300 text-xs font-semibold transition cursor-pointer active:scale-95"
+              >
+                <Download className="w-3.5 h-3.5 text-purple-400" />
+                <span>Download</span>
+              </button>
             </div>
           </div>
         </div>

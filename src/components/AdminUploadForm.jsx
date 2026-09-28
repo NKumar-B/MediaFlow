@@ -23,7 +23,7 @@ export default function AdminUploadForm({
     const file = e.target.files[0];
     if (!file) return;
 
-    // Generates a valid temporary URL for direct testing
+    // Generates a temporary URL for preview & captures raw File object for persistent IndexedDB storage
     const fileObjectURL = URL.createObjectURL(file);
     const extractedTitle = newMedia.title || file.name.replace(/\.[^/.]+$/, "");
 
@@ -31,27 +31,36 @@ export default function AdminUploadForm({
       ...newMedia,
       title: extractedTitle,
       url: fileObjectURL,
-      fileName: file.name
+      fileName: file.name,
+      fileObj: file
     });
 
-    toast.success(`Loaded "${file.name}" into local memory!`);
+    toast.success(`Loaded "${file.name}"! Ready for persistent publication.`);
   };
 
-  const onSubmit = (e) => {
+  const onSubmit = async (e) => {
     e.preventDefault();
 
     if (!newMedia.title.trim()) {
-      return toast.error('A content title is required.');
+      return toast.error('FAILURE: A content title is required.');
     }
     if (!newMedia.artist.trim()) {
-      return toast.error('Artist or Director Name is required.');
+      return toast.error('FAILURE: Artist or Director Name is required.');
     }
-    if (!newMedia.url.trim()) {
-      return toast.error('Please upload a file or specify a valid relative source path.');
+    if (!newMedia.url.trim() && !newMedia.fileObj) {
+      return toast.error('FAILURE: Please select a file or specify a valid media source path/URL.');
     }
 
-    handleUpload(e);
-    toast.success(`"${newMedia.title}" published successfully to the system!`);
+    try {
+      await handleUpload(e);
+      // Reset all input fields upon successful addition
+      setNewMedia({ title: '', artist: '', category: 'Action', type: 'music', url: '', thumbnail: '', fileName: '', fileObj: null });
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    } catch (err) {
+      toast.error(`FAILURE: Unable to add media item. ${err.message || ''}`);
+    }
   };
 
   return (
