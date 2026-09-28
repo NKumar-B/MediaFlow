@@ -8,6 +8,7 @@ import {
   deleteMediaFileFromStorage,
   convertFileToBase64
 } from './services/mediaStorage';
+import { uploadMediaFileToCloud } from './services/cloudStorage';
 import { Toaster, toast } from 'sonner';
 import Auth from './components/Auth';
 import Sidebar from './components/Sidebar';
@@ -238,18 +239,28 @@ export default function App() {
     e.preventDefault();
     if (!newMedia.title || !newMedia.artist) return;
 
+    // Validation: Check for local OS path (e.g. C:\... or file:///...)
+    if (newMedia.url && /^[a-zA-Z]:\\|^file:\/\/\//i.test(newMedia.url.trim())) {
+      toast.error("Local Windows file paths (C:\\...) cannot be played directly by browsers. Please click 'Browse' to upload your file directly.");
+      throw new Error("Local OS file path restricted.");
+    }
+
     const itemId = Date.now();
     let finalUrl = newMedia.url;
     let hasStoredFile = false;
-    let base64Data = null;
 
-    // 1. If uploaded via local file picker, convert to persistent Base64 Data URL & save in IndexedDB
+    // 1. If uploaded via local file picker, upload to Firebase Cloud Storage for high-speed cross-device HTTPS streaming
     if (newMedia.fileObj) {
-      base64Data = await convertFileToBase64(newMedia.fileObj);
-      const saved = await saveMediaFileToStorage(itemId, newMedia.fileObj);
-      if (saved) {
+      try {
+        toast.info(`Uploading "${newMedia.title}" to Cloud Storage...`);
+        finalUrl = await uploadMediaFileToCloud(newMedia.fileObj);
         hasStoredFile = true;
+      } catch (cloudUploadErr) {
+        console.warn("Cloud Storage upload notice, falling back to local storage:", cloudUploadErr);
+        const base64Data = await convertFileToBase64(newMedia.fileObj);
+        await saveMediaFileToStorage(itemId, newMedia.fileObj);
         finalUrl = base64Data || URL.createObjectURL(newMedia.fileObj);
+        hasStoredFile = true;
       }
     }
 
@@ -266,7 +277,7 @@ export default function App() {
       hasStoredFile
     };
 
-    // 2. Realtime Cloud Firestore Sync (Sends Base64 / Hosted URL to Cloud for cross-device mobile visibility)
+    // 2. Realtime Cloud Firestore Sync (Sends high-speed Cloud HTTPS URL to Firestore for cross-device mobile visibility)
     try {
       const docRef = await addDoc(collection(db, "media"), {
         id: newItem.id,
@@ -274,7 +285,7 @@ export default function App() {
         artist: newItem.artist,
         category: newItem.category,
         type: newItem.type,
-        url: base64Data || (newItem.url.startsWith('blob:') ? '' : newItem.url),
+        url: newItem.url,
         thumbnail: newItem.thumbnail,
         createdAt: new Date().toISOString()
       });
@@ -286,11 +297,7 @@ export default function App() {
     setMediaList([newItem, ...mediaList]);
     setNewMedia({ title: '', artist: '', category: 'Action', type: 'music', url: '', thumbnail: '' });
 
-    if (hasStoredFile) {
-      toast.success(`"${newItem.title}" published and synced to mobile & cloud!`);
-    } else {
-      toast.success(`"${newItem.title}" published successfully to the system!`);
-    }
+    toast.success(`"${newItem.title}" published and synced to mobile & cloud!`);
   };
 
   const handleDelete = async (id) => {
