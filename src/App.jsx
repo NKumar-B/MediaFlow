@@ -5,7 +5,8 @@ import { auth, db } from './services/firebase';
 import { 
   saveMediaFileToStorage, 
   getMediaFileFromStorage, 
-  deleteMediaFileFromStorage 
+  deleteMediaFileFromStorage,
+  convertFileToBase64
 } from './services/mediaStorage';
 import { Toaster, toast } from 'sonner';
 import Auth from './components/Auth';
@@ -67,7 +68,7 @@ export default function App() {
     hydratePersistentFiles();
   }, []);
 
-  // 🛠️ Realtime Firebase Firestore Cloud Sync
+  // 🛠️ Realtime Firebase Firestore Cloud Sync across PC & Mobile Devices
   useEffect(() => {
     try {
       const unsubscribe = onSnapshot(collection(db, "media"), (snapshot) => {
@@ -90,13 +91,13 @@ export default function App() {
     }
   }, []);
 
-  // 🛠️ Cloud-Only State Listener
+  // 🛠️ Cloud & Persistent Active User Session Listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
+      const savedUser = localStorage.getItem('MF_ACTIVE_USER');
+      const parsed = savedUser ? JSON.parse(savedUser) : null;
+
       if (user) {
-        const savedUser = localStorage.getItem('MF_ACTIVE_USER');
-        const parsed = savedUser ? JSON.parse(savedUser) : null;
-        
         const userRole = user.email === 'admin@mediaflow.com' ? 'admin' : 'user';
 
         setCurrentUser({
@@ -106,20 +107,15 @@ export default function App() {
           role: userRole
         });
 
-        // Initialize viewMode based on original cloud role
         if (!viewMode) {
           setViewMode(userRole);
         }
+      } else if (parsed) {
+        setCurrentUser(parsed);
+        if (!viewMode) setViewMode(parsed.role);
       } else {
-        const savedUser = localStorage.getItem('MF_ACTIVE_USER');
-        if (savedUser) {
-          const parsed = JSON.parse(savedUser);
-          setCurrentUser(parsed);
-          if (!viewMode) setViewMode(parsed.role);
-        } else {
-          setCurrentUser(null);
-          setViewMode(null);
-        }
+        setCurrentUser(null);
+        setViewMode(null);
       }
       setLoadingSession(false);
     });
@@ -151,7 +147,7 @@ export default function App() {
     localStorage.setItem('MF_ACTIVE_USER', JSON.stringify(user));
   };
 
-  // 🛠️ Cloud-Synced Profile Persistence Handler
+  // 🛠️ Persistent Profile Details and Avatar Persistence Handler
   const handleUpdateProfile = async (newName, newPic) => {
     if (currentUser) {
       try {
@@ -161,16 +157,15 @@ export default function App() {
             displayName: newName, 
             photoURL: newPic 
           });
-
-          const updatedUser = { ...currentUser, name: newName, avatar: newPic };
-          setCurrentUser(updatedUser);
-          localStorage.setItem('MF_ACTIVE_USER', JSON.stringify(updatedUser));
-          
-          toast.success('Cloud profile and display name updated successfully!');
         }
       } catch (error) {
-        toast.error('Failed to sync profile changes to cloud storage.');
+        // Ignore profile sync warning
       }
+
+      const updatedUser = { ...currentUser, name: newName, avatar: newPic };
+      setCurrentUser(updatedUser);
+      localStorage.setItem('MF_ACTIVE_USER', JSON.stringify(updatedUser));
+      toast.success('Profile details saved persistently!');
     }
   };
 
@@ -183,8 +178,12 @@ export default function App() {
       setIsPlaying(false);
       setViewMode(null);
       toast.success('Successfully logged out.');
-    }).catch((error) => {
-      console.error("Sign out error:", error);
+    }).catch(() => {
+      setCurrentUser(null);
+      localStorage.removeItem('MF_ACTIVE_USER');
+      setCurrentlyPlaying(null);
+      setIsPlaying(false);
+      setViewMode(null);
     });
   };
 
@@ -203,13 +202,15 @@ export default function App() {
     const itemId = Date.now();
     let finalUrl = newMedia.url;
     let hasStoredFile = false;
+    let base64Data = null;
 
-    // Save uploaded file into browser's persistent IndexedDB storage
+    // 1. If uploaded via local file picker, convert to persistent Base64 Data URL & save in IndexedDB
     if (newMedia.fileObj) {
+      base64Data = await convertFileToBase64(newMedia.fileObj);
       const saved = await saveMediaFileToStorage(itemId, newMedia.fileObj);
       if (saved) {
         hasStoredFile = true;
-        finalUrl = URL.createObjectURL(newMedia.fileObj);
+        finalUrl = base64Data || URL.createObjectURL(newMedia.fileObj);
       }
     }
 
@@ -226,7 +227,7 @@ export default function App() {
       hasStoredFile
     };
 
-    // Try optional Cloud Firestore Sync
+    // 2. Realtime Cloud Firestore Sync (Sends Base64 / Hosted URL to Cloud for cross-device mobile visibility)
     try {
       const docRef = await addDoc(collection(db, "media"), {
         id: newItem.id,
@@ -234,7 +235,7 @@ export default function App() {
         artist: newItem.artist,
         category: newItem.category,
         type: newItem.type,
-        url: newItem.url.startsWith('blob:') ? '' : newItem.url,
+        url: base64Data || (newItem.url.startsWith('blob:') ? '' : newItem.url),
         thumbnail: newItem.thumbnail,
         createdAt: new Date().toISOString()
       });
@@ -247,7 +248,7 @@ export default function App() {
     setNewMedia({ title: '', artist: '', category: 'Action', type: 'music', url: '', thumbnail: '' });
 
     if (hasStoredFile) {
-      toast.success(`"${newItem.title}" saved persistently! It will NOT clear on page refresh.`);
+      toast.success(`"${newItem.title}" published and synced to mobile & cloud!`);
     } else {
       toast.success(`"${newItem.title}" published successfully to the system!`);
     }

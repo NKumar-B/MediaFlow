@@ -17,8 +17,9 @@ export default function Header({
   const [newName, setNewName] = useState(userName || '');
   const fileInputRef = useRef(null);
 
+  const [imgError, setImgError] = useState(false);
+
   const handleToggleView = () => {
-    // We check the permanent cloud role instead of active viewing mode
     if (role !== 'admin') {
       return toast.error('Access Denied. Admin privileges are required to toggle views.');
     }
@@ -45,9 +46,14 @@ export default function Header({
       return toast.error('Please upload a valid image file.');
     }
 
-    const imageObjectURL = URL.createObjectURL(file);
-    onUpdateProfile(newName.trim() || userName, imageObjectURL);
-    toast.success('Profile picture updated!');
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64Image = reader.result;
+      setImgError(false);
+      onUpdateProfile(newName.trim() || userName, base64Image);
+      toast.success('Profile picture updated!');
+    };
+    reader.readAsDataURL(file);
   };
 
   return (
@@ -82,10 +88,11 @@ export default function Header({
           className="flex items-center space-x-3 bg-slate-900/40 border border-slate-800/60 hover:bg-slate-800/40 px-3 py-1.5 rounded-2xl cursor-pointer hover:border-slate-700 transition select-none"
           title="Manage Account Profile"
         >
-          {userProfilePic ? (
+          {userProfilePic && !imgError ? (
             <img 
               src={userProfilePic} 
-              alt="User" 
+              alt={userName || 'User'} 
+              onError={() => setImgError(true)}
               className="w-8 h-8 rounded-xl object-cover border border-slate-700/80" 
             />
           ) : (
@@ -119,8 +126,8 @@ export default function Header({
                 className="relative group cursor-pointer"
                 title="Change Avatar"
               >
-                {userProfilePic ? (
-                  <img src={userProfilePic} alt="Avatar" className="w-16 h-16 rounded-2xl object-cover border-2 border-slate-800 group-hover:border-purple-500 transition" />
+                {userProfilePic && !imgError ? (
+                  <img src={userProfilePic} alt="Avatar" onError={() => setImgError(true)} className="w-16 h-16 rounded-2xl object-cover border-2 border-slate-800 group-hover:border-purple-500 transition" />
                 ) : (
                   <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-purple-500/10 to-pink-500/10 border-2 border-slate-800 group-hover:border-purple-500 transition flex items-center justify-center text-purple-400 text-2xl font-black uppercase">
                     {userName ? userName.charAt(0) : 'U'}
