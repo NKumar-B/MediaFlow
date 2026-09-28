@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { onAuthStateChanged, signOut, updateProfile } from "firebase/auth";
-import { collection, onSnapshot, addDoc, deleteDoc, doc } from "firebase/firestore";
+import { collection, onSnapshot, addDoc, deleteDoc, doc, getDocs, query, where } from "firebase/firestore";
 import { auth, db } from './services/firebase';
 import { 
   saveMediaFileToStorage, 
@@ -35,7 +35,9 @@ export default function App() {
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(true);
   const [mediaList, setMediaList] = useState(() => {
     const data = localStorage.getItem('MF_STORED_MEDIA');
-    return data ? JSON.parse(data) : initialMedia;
+    const deletedLocalIds = JSON.parse(localStorage.getItem('MF_DELETED_IDS') || '[]');
+    const base = data ? JSON.parse(data) : initialMedia;
+    return base.filter((item) => !deletedLocalIds.includes(item.id));
   });
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -49,7 +51,8 @@ export default function App() {
   useEffect(() => {
     const hydratePersistentFiles = async () => {
       const storedData = localStorage.getItem('MF_STORED_MEDIA');
-      const baseList = storedData ? JSON.parse(storedData) : initialMedia;
+      const deletedLocalIds = JSON.parse(localStorage.getItem('MF_DELETED_IDS') || '[]');
+      const baseList = (storedData ? JSON.parse(storedData) : initialMedia).filter(i => !deletedLocalIds.includes(i.id));
 
       const hydrated = await Promise.all(
         baseList.map(async (item) => {
@@ -68,21 +71,48 @@ export default function App() {
     hydratePersistentFiles();
   }, []);
 
-  // 🛠️ Realtime Firebase Firestore Cloud Sync across PC & Mobile Devices
+  // 🛠️ Realtime Firebase Firestore Cloud Sync & Instant Deletion Reflection
   useEffect(() => {
     try {
       const unsubscribe = onSnapshot(collection(db, "media"), (snapshot) => {
-        if (!snapshot.empty) {
-          const cloudItems = snapshot.docs.map((d) => ({ firestoreId: d.id, ...d.data() }));
-          setMediaList((prev) => {
-            const mergedMap = new Map();
-            prev.forEach((item) => mergedMap.set(String(item.id), item));
-            cloudItems.forEach((item) => mergedMap.set(String(item.id), item));
-            return Array.from(mergedMap.values());
+        const deletedLocalIds = JSON.parse(localStorage.getItem('MF_DELETED_IDS') || '[]');
+        const cloudItemsMap = new Map();
+
+        snapshot.docs.forEach((docSnap) => {
+          const data = docSnap.data();
+          const itemKey = String(data.id || docSnap.id);
+          if (!deletedLocalIds.includes(data.id)) {
+            cloudItemsMap.set(itemKey, { firestoreId: docSnap.id, ...data });
+          }
+        });
+
+        setMediaList((prev) => {
+          const updatedList = [];
+          const processedIds = new Set();
+
+          // 1. Add all active cloud items
+          cloudItemsMap.forEach((cloudItem, key) => {
+            processedIds.add(key);
+            const prevLocal = prev.find(p => String(p.id) === key);
+            updatedList.push({
+              ...cloudItem,
+              url: (prevLocal?.url && prevLocal.url.startsWith('blob:')) ? prevLocal.url : (cloudItem.url || prevLocal?.url || '')
+            });
           });
-        }
-      }, () => {
-        // Fallback gracefully if Firestore not initialized yet
+
+          // 2. Retain local-only items that have NOT been deleted and are NOT cloud items
+          prev.forEach((item) => {
+            const key = String(item.id);
+            if (!processedIds.has(key) && !item.firestoreId && !deletedLocalIds.includes(item.id)) {
+              updatedList.push(item);
+              processedIds.add(key);
+            }
+          });
+
+          return updatedList;
+        });
+      }, (err) => {
+        console.warn("Firestore snapshot notice:", err);
       });
 
       return () => unsubscribe();
@@ -102,7 +132,7 @@ export default function App() {
 
         setCurrentUser({
           email: user.email,
-          name: parsed?.name || user.displayName || 'Subscribed User',
+          name: parsed?.name || user.displayName || user.email.split('@')[0],
           avatar: parsed?.avatar || user.photoURL || '',
           role: userRole
         });
@@ -143,8 +173,17 @@ export default function App() {
   }, [mediaList]);
 
   const handleAuthSuccess = (user) => {
-    setCurrentUser(user);
-    localStorage.setItem('MF_ACTIVE_USER', JSON.stringify(user));
+    const savedUser = localStorage.getItem('MF_ACTIVE_USER');
+    const parsed = savedUser ? JSON.parse(savedUser) : null;
+
+    const mergedUser = {
+      ...user,
+      name: user.name || parsed?.name || 'Active User',
+      avatar: user.avatar || parsed?.avatar || ''
+    };
+
+    setCurrentUser(mergedUser);
+    localStorage.setItem('MF_ACTIVE_USER', JSON.stringify(mergedUser));
   };
 
   // 🛠️ Persistent Profile Details and Avatar Persistence Handler
@@ -257,19 +296,34 @@ export default function App() {
   const handleDelete = async (id) => {
     const itemToDelete = mediaList.find((i) => i.id === id);
     
-    // Delete from local IndexedDB storage
+    // 1. Delete from local IndexedDB storage
     await deleteMediaFileFromStorage(id);
 
-    // Delete from Cloud Firestore if firestoreId present
-    if (itemToDelete?.firestoreId) {
-      try {
-        await deleteDoc(doc(db, "media", itemToDelete.firestoreId));
-      } catch (e) {
-        console.error("Firestore delete error:", e);
-      }
+    // 2. Track deleted ID in localStorage so static items stay deleted locally
+    const deletedLocalIds = JSON.parse(localStorage.getItem('MF_DELETED_IDS') || '[]');
+    if (!deletedLocalIds.includes(id)) {
+      deletedLocalIds.push(id);
+      localStorage.setItem('MF_DELETED_IDS', JSON.stringify(deletedLocalIds));
     }
 
-    setMediaList(mediaList.filter(item => item.id !== id));
+    // 3. Delete from Cloud Firestore (by firestoreId or querying document id)
+    try {
+      if (itemToDelete?.firestoreId) {
+        await deleteDoc(doc(db, "media", itemToDelete.firestoreId));
+      } else {
+        const q = query(collection(db, "media"), where("id", "==", id));
+        const snapshot = await getDocs(q);
+        snapshot.forEach(async (docSnap) => {
+          await deleteDoc(doc(db, "media", docSnap.id));
+        });
+      }
+    } catch (e) {
+      console.warn("Firestore delete notice:", e);
+    }
+
+    // 4. Update local state immediately
+    setMediaList((prev) => prev.filter(item => item.id !== id));
+
     if (currentlyPlaying?.id === id) {
       setCurrentlyPlaying(null);
       setIsPlaying(false);

@@ -487,7 +487,7 @@ export default function MediaControlPlayer({
       {currentlyPlaying.type === 'music' && (
         <audio 
           ref={audioRef} 
-          src={currentlyPlaying.url} 
+          src={currentlyPlaying.url || "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=lofi-study-112191.mp3"} 
           onEnded={playNext}
           onError={handleAudioError}
           onTimeUpdate={() => handleTimeUpdate(audioRef)}
@@ -515,20 +515,21 @@ export default function MediaControlPlayer({
               </button>
             </div>
 
-            <div ref={videoContainerRef} className="relative aspect-video bg-black rounded-3xl overflow-hidden border border-slate-800/80 shadow-2xl flex items-center justify-center group">
+            <div ref={videoContainerRef} className="relative aspect-video bg-black rounded-3xl overflow-hidden border border-slate-800/80 shadow-2xl flex items-center justify-center">
               <video 
                 ref={videoRef}
-                src={currentlyPlaying.url}
+                src={currentlyPlaying.url || "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"}
                 onClick={() => setIsPlaying(!isPlaying)}
                 onEnded={playNext}
                 onTimeUpdate={() => handleTimeUpdate(videoRef)}
                 onLoadedMetadata={() => handleLoadedMetadata(videoRef)}
                 className="w-full h-full object-contain cursor-pointer"
                 preload="auto"
+                playsInline
               />
 
-              {/* Control Overlays */}
-              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition duration-300 flex flex-col justify-end p-6 gap-4">
+              {/* Control Overlays: ALWAYS VISIBLE ON MOBILE & DESKTOP */}
+              <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent flex flex-col justify-end p-4 md:p-6 gap-3 z-30">
                 <div className="flex items-center w-full gap-3 text-xs text-slate-200 font-mono">
                   <span>{formatTime(currentTime)}</span>
                   <input 
@@ -544,25 +545,25 @@ export default function MediaControlPlayer({
 
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <button onClick={playPrev} className="p-2.5 bg-slate-900/80 hover:bg-slate-800 border border-slate-700/50 rounded-full text-slate-200 transition">
+                    <button onClick={playPrev} className="p-2.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700/50 rounded-full text-slate-200 transition active:scale-95">
                       <SkipBack className="w-5 h-5 fill-slate-200" />
                     </button>
-                    <button onClick={() => setIsPlaying(!isPlaying)} className="p-3 bg-white text-black hover:bg-purple-300 rounded-full transition hover:scale-105">
+                    <button onClick={() => setIsPlaying(!isPlaying)} className="p-3 bg-white text-black hover:bg-purple-300 rounded-full transition hover:scale-105 active:scale-95 shadow-lg shadow-white/10">
                       {isPlaying ? <Pause className="w-5 h-5 fill-black" /> : <Play className="w-5 h-5 fill-black" />}
                     </button>
-                    <button onClick={playNext} className="p-2.5 bg-slate-900/80 hover:bg-slate-800 border border-slate-700/50 rounded-full text-slate-200 transition">
+                    <button onClick={playNext} className="p-2.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700/50 rounded-full text-slate-200 transition active:scale-95">
                       <SkipForward className="w-5 h-5 fill-slate-200" />
                     </button>
                   </div>
 
                   <div className="flex items-center gap-3">
-                    <button onClick={handleDownloadMedia} title="Download Movie" className="p-2.5 bg-slate-900/80 hover:bg-slate-800 border border-slate-700/50 rounded-full text-slate-300 hover:text-purple-400 transition">
+                    <button onClick={handleDownloadMedia} title="Download Movie" className="p-2.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700/50 rounded-full text-slate-300 hover:text-purple-400 transition active:scale-95">
                       <Download className="w-5 h-5" />
                     </button>
-                    <button onClick={() => setIsMuted(!isMuted)} className="p-2.5 bg-slate-900/80 hover:bg-slate-800 border border-slate-700/50 rounded-full text-slate-300 transition">
+                    <button onClick={() => setIsMuted(!isMuted)} className="p-2.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700/50 rounded-full text-slate-300 transition active:scale-95">
                       {isMuted ? <VolumeX className="w-5 h-5 text-red-400" /> : <Volume2 className="w-5 h-5 text-purple-400" />}
                     </button>
-                    <button onClick={toggleFullScreen} className="p-2.5 bg-slate-900/80 hover:bg-slate-800 border border-slate-700/50 rounded-full text-slate-300 transition">
+                    <button onClick={toggleFullScreen} className="p-2.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700/50 rounded-full text-slate-300 transition active:scale-95">
                       <Maximize className="w-5 h-5" />
                     </button>
                   </div>

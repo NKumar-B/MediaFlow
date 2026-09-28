@@ -47,7 +47,8 @@ export default function MediaGrid({
       {filteredMedia.map((item) => (
         <div 
           key={item.id} 
-          className="group relative bg-slate-900/30 border border-slate-800/80 rounded-2xl overflow-hidden transition-all duration-300 hover:border-slate-700/80 hover:bg-slate-900/50 hover:shadow-2xl hover:shadow-purple-500/5 backdrop-blur-xs flex flex-col justify-between">
+          onClick={() => togglePlayback(item)}
+          className="group relative bg-slate-900/30 border border-slate-800/80 rounded-2xl overflow-hidden transition-all duration-300 hover:border-slate-700/80 hover:bg-slate-900/50 hover:shadow-2xl hover:shadow-purple-500/5 backdrop-blur-xs flex flex-col justify-between cursor-pointer">
           
           {/* Cover Header */}
           <div className="relative aspect-square md:aspect-video w-full overflow-hidden bg-slate-950">
@@ -57,12 +58,14 @@ export default function MediaGrid({
               className="w-full h-full object-cover group-hover:scale-105 transition-all duration-500"
             />
             
-            <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/10 to-transparent opacity-60 group-hover:opacity-80 transition-all duration-300"></div>
+            <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent opacity-70 transition-all duration-300"></div>
 
-            {/* Float Action Button */}
+            {/* PLAY BUTTON ALWAYS VISIBLE ON MOBILE AND DESKTOP */}
             <button 
-              onClick={() => togglePlayback(item)} 
-              className="absolute bottom-3 right-3 p-3.5 rounded-full bg-purple-500/90 text-white opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-300 hover:bg-purple-600 hover:scale-110 backdrop-blur-md shadow-xl shadow-purple-600/30">
+              onClick={(e) => { e.stopPropagation(); togglePlayback(item); }} 
+              className="absolute bottom-3 right-3 p-3.5 rounded-full bg-purple-600 text-white hover:bg-purple-500 transition-all duration-200 hover:scale-110 active:scale-95 backdrop-blur-md shadow-lg shadow-purple-600/40 z-20"
+              title={currentlyPlaying?.id === item.id && isPlaying ? "Pause" : "Play"}
+            >
               {currentlyPlaying?.id === item.id && isPlaying ? (
                 <Pause className="w-5 h-5 fill-white" />
               ) : (
@@ -71,7 +74,7 @@ export default function MediaGrid({
             </button>
 
             {/* Media Dynamic Badge */}
-            <div className="absolute top-3 left-3 bg-slate-950/70 border border-slate-800/80 backdrop-blur-md px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider text-slate-300 uppercase">
+            <div className="absolute top-3 left-3 bg-slate-950/80 border border-slate-800/80 backdrop-blur-md px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider text-slate-300 uppercase">
               {item.type}
             </div>
           </div>
