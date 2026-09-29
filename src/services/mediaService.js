@@ -87,6 +87,35 @@ export async function uploadFileToR2Serverless(file, mediaType = 'movie') {
 }
 
 /**
+ * Stream binary file directly to Vercel Serverless API (/api/media/upload-stream)
+ * Eliminates browser CORS preflight checks completely.
+ * @param {File} file 
+ * @param {string} mediaType 
+ * @returns {Promise<{ publicUrl: string, storagePath: string }>}
+ */
+export async function uploadFileToR2RawStream(file, mediaType = 'movie') {
+  const queryParams = new URLSearchParams({
+    fileName: file.name,
+    mediaType: mediaType || 'movie'
+  });
+
+  const res = await fetch(`/api/media/upload-stream?${queryParams.toString()}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': file.type || 'application/octet-stream'
+    },
+    body: file
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || `Serverless upload stream error (${res.status})`);
+  }
+
+  return await res.json();
+}
+
+/**
  * Direct browser upload to Cloudflare R2 using presigned URL
  * @param {File} file 
  * @param {string} presignedUploadUrl 

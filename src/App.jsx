@@ -9,7 +9,7 @@ import {
   convertFileToBase64
 } from './services/mediaStorage';
 import { uploadMediaFileToCloud } from './services/cloudStorage';
-import { getPresignedR2UploadUrl, uploadFileToR2PresignedUrl, uploadFileToR2Serverless } from './services/mediaService';
+import { getPresignedR2UploadUrl, uploadFileToR2PresignedUrl, uploadFileToR2Serverless, uploadFileToR2RawStream } from './services/mediaService';
 import { Toaster, toast } from 'sonner';
 import Auth from './components/Auth';
 import Sidebar from './components/Sidebar';
@@ -256,33 +256,38 @@ export default function App() {
     let finalUrl = newMedia.url;
     let hasStoredFile = false;
 
-    // Presigned Cloudflare R2 Upload Pipeline (No 413 Vercel Payload Limit)
+    // Serverless Raw Stream Upload Pipeline (Zero Browser CORS Errors)
     if (newMedia.fileObj) {
       let r2Success = false;
       try {
-        toast.info(`Requesting Cloudflare R2 upload URL for "${newMedia.title}"...`);
-        const { uploadUrl, publicUrl, storagePath } = await getPresignedR2UploadUrl(
-          newMedia.fileObj.name, 
-          newMedia.fileObj.type, 
-          newMedia.type
-        );
-
-        if (uploadUrl) {
-          toast.info(`Uploading media directly to Cloudflare R2...`);
-          const uploadRes = await fetch(uploadUrl, {
-            method: 'PUT',
-            body: newMedia.fileObj
-          });
-
-          if (uploadRes.ok) {
-            finalUrl = publicUrl || (storagePath ? `/api/media/access-url?key=${encodeURIComponent(storagePath)}` : null) || URL.createObjectURL(newMedia.fileObj);
-            hasStoredFile = true;
-            r2Success = true;
-            toast.success("Uploaded directly to Cloudflare R2!");
+        toast.info(`Uploading "${newMedia.title}" to Cloudflare R2...`);
+        const { publicUrl, storagePath } = await uploadFileToR2RawStream(newMedia.fileObj, newMedia.type);
+        finalUrl = publicUrl || (storagePath ? `/api/media/access-url?key=${encodeURIComponent(storagePath)}` : null) || URL.createObjectURL(newMedia.fileObj);
+        hasStoredFile = true;
+        r2Success = true;
+        toast.success("Uploaded directly to Cloudflare R2!");
+      } catch (streamErr) {
+        try {
+          const { uploadUrl, publicUrl, storagePath } = await getPresignedR2UploadUrl(
+            newMedia.fileObj.name, 
+            newMedia.fileObj.type, 
+            newMedia.type
+          );
+          if (uploadUrl) {
+            const uploadRes = await fetch(uploadUrl, {
+              method: 'PUT',
+              body: newMedia.fileObj
+            });
+            if (uploadRes.ok) {
+              finalUrl = publicUrl || (storagePath ? `/api/media/access-url?key=${encodeURIComponent(storagePath)}` : null) || URL.createObjectURL(newMedia.fileObj);
+              hasStoredFile = true;
+              r2Success = true;
+              toast.success("Uploaded directly to Cloudflare R2!");
+            }
           }
+        } catch (r2Err) {
+          // Quiet fallback
         }
-      } catch (r2Err) {
-        // Fallback to local storage if Cloudflare R2 CORS or credentials are unconfigured
       }
 
       if (!r2Success) {
