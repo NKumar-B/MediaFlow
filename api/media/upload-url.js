@@ -53,10 +53,10 @@ export default async function handler(req, res) {
     const folder = mediaType === 'music' ? 'music' : 'movies';
     const storagePath = `${folder}/${Date.now()}_${sanitizedName}`;
 
+    // Omit ContentType restriction from PutObjectCommand so signed headers match simple PUT requests without header lock
     const command = new PutObjectCommand({
       Bucket: bucketName,
-      Key: storagePath,
-      ContentType: fileType || 'application/octet-stream'
+      Key: storagePath
     });
 
     const uploadUrl = await getSignedUrl(s3, command, { 

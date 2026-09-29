@@ -271,7 +271,6 @@ export default function App() {
           toast.info(`Uploading media directly to Cloudflare R2...`);
           const uploadRes = await fetch(uploadUrl, {
             method: 'PUT',
-            headers: { 'Content-Type': newMedia.fileObj.type || 'application/octet-stream' },
             body: newMedia.fileObj
           });
 
