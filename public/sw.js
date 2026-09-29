@@ -1,5 +1,5 @@
 // Service Worker for MediaFlow Progressive Web App (PWA)
-const CACHE_NAME = 'mediaflow-pwa-v2';
+const CACHE_NAME = 'mediaflow-pwa-v3';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
@@ -7,22 +7,24 @@ const ASSETS_TO_CACHE = [
   '/favicon.svg'
 ];
 
-// Install event - Cache static shell assets
+// Install event - Skip waiting immediately on new deployment
 self.addEventListener('install', (event) => {
+  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       return cache.addAll(ASSETS_TO_CACHE);
-    }).then(() => self.skipWaiting())
+    })
   );
 });
 
-// Activate event - Clean up old caches
+// Activate event - Delete ALL older cache versions and claim clients
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames.map((cache) => {
           if (cache !== CACHE_NAME) {
+            console.log('[SW] Deleting obsolete cache:', cache);
             return caches.delete(cache);
           }
         })
@@ -31,7 +33,7 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch event - Cache static same-origin shell while bypassing API, Firestore & R2 Media
+// Fetch event - Network-First for HTML/Navigations, Cache-First for static assets, Bypass for APIs/R2
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
 
@@ -49,17 +51,43 @@ self.addEventListener('fetch', (event) => {
       return;
     }
 
+    // HTML / Page Navigations: Network-First to ensure fresh index.html & asset bundle hashes
+    const isHtmlNavigation = event.request.mode === 'navigate' || 
+                             url.pathname === '/' || 
+                             url.pathname.endsWith('.html');
+
+    if (isHtmlNavigation) {
+      event.respondWith(
+        fetch(event.request)
+          .then((networkResponse) => {
+            if (networkResponse && networkResponse.status === 200) {
+              const responseToCache = networkResponse.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseToCache));
+            }
+            return networkResponse;
+          })
+          .catch(() => caches.match(event.request).then((cached) => cached || caches.match('/index.html')))
+      );
+      return;
+    }
+
+    // Static Assets & Scripts: Stale-While-Revalidate / Cache with Network Fallback
     event.respondWith(
       caches.match(event.request).then((cachedResponse) => {
         if (cachedResponse) {
+          // Fetch background update for cache
+          fetch(event.request).then((networkResponse) => {
+            if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
+              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, networkResponse));
+            }
+          }).catch(() => {});
           return cachedResponse;
         }
+
         return fetch(event.request).then((networkResponse) => {
           if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
             const responseToCache = networkResponse.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(event.request, responseToCache);
-            });
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseToCache));
           }
           return networkResponse;
         });
