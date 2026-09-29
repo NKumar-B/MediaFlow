@@ -6,7 +6,6 @@ import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 export default async function handler(req, res) {
-  // Set CORS headers for serverless API endpoint
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -45,7 +44,9 @@ export default async function handler(req, res) {
       credentials: {
         accessKeyId,
         secretAccessKey
-      }
+      },
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+      responseChecksumValidation: 'WHEN_REQUIRED'
     });
 
     const sanitizedName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -58,7 +59,9 @@ export default async function handler(req, res) {
       ContentType: fileType || 'application/octet-stream'
     });
 
-    const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
+    const uploadUrl = await getSignedUrl(s3, command, { 
+      expiresIn: 3600
+    });
     const publicUrl = `${publicUrlBase.replace(/\/$/, '')}/${storagePath}`;
 
     return res.status(200).json({

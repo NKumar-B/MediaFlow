@@ -283,7 +283,7 @@ export default function App() {
           }
         }
       } catch (r2Err) {
-        console.warn("Cloudflare R2 presigned upload notice:", r2Err.message);
+        // Fallback to local storage if Cloudflare R2 CORS or credentials are unconfigured
       }
 
       if (!r2Success) {
