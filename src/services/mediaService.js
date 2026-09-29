@@ -63,6 +63,7 @@ export function uploadFileToR2PresignedUrl(file, presignedUploadUrl, onProgress)
     const xhr = new XMLHttpRequest();
     xhr.open('PUT', presignedUploadUrl, true);
     xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+    xhr.timeout = 25000; // 25s timeout to catch CORS/network lockup
 
     if (xhr.upload && onProgress) {
       xhr.upload.onprogress = (event) => {
@@ -77,11 +78,15 @@ export function uploadFileToR2PresignedUrl(file, presignedUploadUrl, onProgress)
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve(true);
       } else {
-        reject(new Error(`R2 upload failed with status ${xhr.status}`));
+        reject(new Error(`R2 upload rejected with status ${xhr.status}. Check R2 Bucket CORS configuration.`));
       }
     };
 
-    xhr.onerror = () => reject(new Error("Network error uploading to Cloudflare R2"));
+    xhr.ontimeout = () => {
+      reject(new Error("Cloudflare R2 upload timed out. Falling back to cloud storage."));
+    };
+
+    xhr.onerror = () => reject(new Error("Network / CORS error uploading to Cloudflare R2. Check R2 Bucket CORS settings."));
     xhr.send(file);
   });
 }

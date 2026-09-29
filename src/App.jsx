@@ -249,7 +249,7 @@ export default function App() {
     if (newMedia.fileObj) {
       try {
         toast.info(`Generating Cloudflare R2 upload URL for "${newMedia.title}"...`);
-        const { uploadUrl, publicUrl, isSimulated } = await getPresignedR2UploadUrl(
+        const { uploadUrl, publicUrl, storagePath, isSimulated } = await getPresignedR2UploadUrl(
           newMedia.fileObj.name, 
           newMedia.fileObj.type, 
           newMedia.type
@@ -258,7 +258,7 @@ export default function App() {
         if (!isSimulated && uploadUrl && uploadUrl !== 'https://httpbin.org/put') {
           toast.info(`Uploading media file to Cloudflare R2...`);
           await uploadFileToR2PresignedUrl(newMedia.fileObj, uploadUrl);
-          finalUrl = publicUrl;
+          finalUrl = publicUrl || (storagePath ? `/api/media/access-url?key=${encodeURIComponent(storagePath)}` : null) || URL.createObjectURL(newMedia.fileObj);
           hasStoredFile = true;
           toast.success("Uploaded directly to Cloudflare R2!");
         } else {
@@ -267,7 +267,8 @@ export default function App() {
           hasStoredFile = true;
         }
       } catch (r2Err) {
-        console.warn("Cloudflare R2 upload notice, falling back:", r2Err);
+        console.warn("Cloudflare R2 upload notice, falling back to cloud storage:", r2Err);
+        toast.info("R2 CORS/Configuration notice. Uploading via Cloud Storage...");
         try {
           finalUrl = await uploadMediaFileToCloud(newMedia.fileObj);
           hasStoredFile = true;

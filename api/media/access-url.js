@@ -22,7 +22,7 @@ export default async function handler(req, res) {
   const accountId = process.env.R2_ACCOUNT_ID;
   const accessKeyId = process.env.R2_ACCESS_KEY_ID;
   const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
-  const bucketName = process.env.R2_BUCKET_NAME || 'mediaflow';
+  const bucketName = process.env.R2_BUCKET_NAME || 'mediaflow-media';
   const publicUrlBase = process.env.R2_PUBLIC_URL;
 
   // Direct CDN URL if custom domain/CDN public URL is set
@@ -31,17 +31,11 @@ export default async function handler(req, res) {
     return res.status(200).json({ accessUrl: directUrl });
   }
 
-  // if (!accountId || !accessKeyId || !secretAccessKey) {
-  //   return res.status(200).json({
-  //     accessUrl: `https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4`
-  //   });
-  // }
-
-  if (!accountId || !accessKeyId || !secretAccessKey || !bucketName) {
-  return res.status(500).json({
-    message: 'R2 environment variables are not configured.'
-  });
-}
+  if (!accountId || !accessKeyId || !secretAccessKey) {
+    return res.status(500).json({
+      message: 'R2 environment variables are not configured in Vercel settings.'
+    });
+  }
 
   try {
     const s3 = new S3Client({
