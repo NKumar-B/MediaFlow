@@ -168,8 +168,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const serializableList = mediaList.map(({ fileObj, ...rest }) => rest);
-    localStorage.setItem('MF_STORED_MEDIA', JSON.stringify(serializableList));
+    const cleanList = mediaList.map(({ fileObj, ...rest }) => {
+      const isBase64 = rest.url && rest.url.startsWith('data:');
+      return {
+        ...rest,
+        url: isBase64 ? '' : rest.url,
+        hlsUrl: isBase64 ? '' : rest.hlsUrl
+      };
+    });
+    try {
+      localStorage.setItem('MF_STORED_MEDIA', JSON.stringify(cleanList));
+    } catch (err) {
+      console.warn("localStorage quota notice, keeping stored metadata lean:", err);
+    }
   }, [mediaList]);
 
   const handleAuthSuccess = (user) => {
@@ -245,23 +256,43 @@ export default function App() {
     let finalUrl = newMedia.url;
     let hasStoredFile = false;
 
-    // Serverless Cloudflare R2 Upload Pipeline (Zero Browser CORS errors)
+    // Presigned Cloudflare R2 Upload Pipeline (No 413 Vercel Payload Limit)
     if (newMedia.fileObj) {
+      let r2Success = false;
       try {
-        toast.info(`Uploading "${newMedia.title}" to Cloudflare R2...`);
-        const { publicUrl, storagePath } = await uploadFileToR2Serverless(newMedia.fileObj, newMedia.type);
-        finalUrl = publicUrl || (storagePath ? `/api/media/access-url?key=${encodeURIComponent(storagePath)}` : null) || URL.createObjectURL(newMedia.fileObj);
-        hasStoredFile = true;
-        toast.success("Uploaded directly to Cloudflare R2!");
-      } catch (r2ServerlessErr) {
-        console.warn("Serverless R2 upload notice, falling back to persistent storage:", r2ServerlessErr.message);
+        toast.info(`Requesting Cloudflare R2 upload URL for "${newMedia.title}"...`);
+        const { uploadUrl, publicUrl, storagePath } = await getPresignedR2UploadUrl(
+          newMedia.fileObj.name, 
+          newMedia.fileObj.type, 
+          newMedia.type
+        );
+
+        if (uploadUrl) {
+          toast.info(`Uploading media directly to Cloudflare R2...`);
+          const uploadRes = await fetch(uploadUrl, {
+            method: 'PUT',
+            headers: { 'Content-Type': newMedia.fileObj.type || 'application/octet-stream' },
+            body: newMedia.fileObj
+          });
+
+          if (uploadRes.ok) {
+            finalUrl = publicUrl || (storagePath ? `/api/media/access-url?key=${encodeURIComponent(storagePath)}` : null) || URL.createObjectURL(newMedia.fileObj);
+            hasStoredFile = true;
+            r2Success = true;
+            toast.success("Uploaded directly to Cloudflare R2!");
+          }
+        }
+      } catch (r2Err) {
+        console.warn("Cloudflare R2 presigned upload notice:", r2Err.message);
+      }
+
+      if (!r2Success) {
         try {
-          // Fallback: Save to persistent IndexedDB & Base64 Data URL so upload never fails
-          const base64Data = await convertFileToBase64(newMedia.fileObj);
+          toast.info("Saving file to persistent browser storage...");
           await saveMediaFileToStorage(itemId, newMedia.fileObj);
-          finalUrl = base64Data || URL.createObjectURL(newMedia.fileObj);
+          finalUrl = URL.createObjectURL(newMedia.fileObj);
           hasStoredFile = true;
-          toast.success(`Saved "${newMedia.title}" persistently! (Configure R2 credentials in Vercel for Cloud sync)`);
+          toast.success(`Saved "${newMedia.title}" persistently! (Configure R2 credentials & CORS in Cloudflare for cloud sync)`);
         } catch (localErr) {
           finalUrl = URL.createObjectURL(newMedia.fileObj);
           hasStoredFile = true;
@@ -284,21 +315,25 @@ export default function App() {
     };
 
     try {
+      const isDataUri = newItem.url && newItem.url.startsWith('data:');
+      const isBlobUri = newItem.url && newItem.url.startsWith('blob:');
+      const cloudUrl = (isDataUri || isBlobUri) ? '' : newItem.url;
+
       const docRef = await addDoc(collection(db, "media"), {
         id: newItem.id,
         title: newItem.title,
         artist: newItem.artist,
         category: newItem.category,
         type: newItem.type,
-        url: newItem.url,
-        hlsUrl: newItem.hlsUrl,
+        url: cloudUrl,
+        hlsUrl: cloudUrl,
         thumbnail: newItem.thumbnail,
         posterUrl: newItem.thumbnail,
         createdAt: new Date().toISOString()
       });
       newItem.firestoreId = docRef.id;
     } catch (cloudErr) {
-      // Local storage active
+      console.warn("Firestore sync notice:", cloudErr);
     }
 
     setMediaList([newItem, ...mediaList]);
