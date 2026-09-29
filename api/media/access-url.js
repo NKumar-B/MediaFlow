@@ -31,11 +31,17 @@ export default async function handler(req, res) {
     return res.status(200).json({ accessUrl: directUrl });
   }
 
-  if (!accountId || !accessKeyId || !secretAccessKey) {
-    return res.status(200).json({
-      accessUrl: `https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4`
-    });
-  }
+  // if (!accountId || !accessKeyId || !secretAccessKey) {
+  //   return res.status(200).json({
+  //     accessUrl: `https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4`
+  //   });
+  // }
+
+  if (!accountId || !accessKeyId || !secretAccessKey || !bucketName) {
+  return res.status(500).json({
+    message: 'R2 environment variables are not configured.'
+  });
+}
 
   try {
     const s3 = new S3Client({
