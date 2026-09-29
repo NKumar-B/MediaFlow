@@ -9,7 +9,7 @@ import {
   convertFileToBase64
 } from './services/mediaStorage';
 import { uploadMediaFileToCloud } from './services/cloudStorage';
-import { getPresignedR2UploadUrl, uploadFileToR2PresignedUrl } from './services/mediaService';
+import { getPresignedR2UploadUrl, uploadFileToR2PresignedUrl, uploadFileToR2Serverless } from './services/mediaService';
 import { Toaster, toast } from 'sonner';
 import Auth from './components/Auth';
 import Sidebar from './components/Sidebar';
@@ -245,37 +245,25 @@ export default function App() {
     let finalUrl = newMedia.url;
     let hasStoredFile = false;
 
-    // Direct Cloudflare R2 Presigned Upload Pipeline with Fallbacks
+    // Serverless Cloudflare R2 Upload Pipeline (Zero Browser CORS errors)
     if (newMedia.fileObj) {
       try {
-        toast.info(`Generating Cloudflare R2 upload URL for "${newMedia.title}"...`);
-        const { uploadUrl, publicUrl, storagePath, isSimulated } = await getPresignedR2UploadUrl(
-          newMedia.fileObj.name, 
-          newMedia.fileObj.type, 
-          newMedia.type
-        );
-        
-        if (!isSimulated && uploadUrl && uploadUrl !== 'https://httpbin.org/put') {
-          toast.info(`Uploading media file to Cloudflare R2...`);
-          await uploadFileToR2PresignedUrl(newMedia.fileObj, uploadUrl);
-          finalUrl = publicUrl || (storagePath ? `/api/media/access-url?key=${encodeURIComponent(storagePath)}` : null) || URL.createObjectURL(newMedia.fileObj);
-          hasStoredFile = true;
-          toast.success("Uploaded directly to Cloudflare R2!");
-        } else {
-          toast.info("Uploading file via cloud storage fallback...");
-          finalUrl = await uploadMediaFileToCloud(newMedia.fileObj);
-          hasStoredFile = true;
-        }
-      } catch (r2Err) {
-        console.warn("Cloudflare R2 upload notice, falling back to cloud storage:", r2Err);
-        toast.info("R2 CORS/Configuration notice. Uploading via Cloud Storage...");
+        toast.info(`Uploading "${newMedia.title}" to Cloudflare R2...`);
+        const { publicUrl, storagePath } = await uploadFileToR2Serverless(newMedia.fileObj, newMedia.type);
+        finalUrl = publicUrl || (storagePath ? `/api/media/access-url?key=${encodeURIComponent(storagePath)}` : null) || URL.createObjectURL(newMedia.fileObj);
+        hasStoredFile = true;
+        toast.success("Uploaded directly to Cloudflare R2!");
+      } catch (r2ServerlessErr) {
+        console.warn("Serverless R2 upload notice, falling back to persistent storage:", r2ServerlessErr.message);
         try {
-          finalUrl = await uploadMediaFileToCloud(newMedia.fileObj);
-          hasStoredFile = true;
-        } catch (cloudErr) {
+          // Fallback: Save to persistent IndexedDB & Base64 Data URL so upload never fails
           const base64Data = await convertFileToBase64(newMedia.fileObj);
           await saveMediaFileToStorage(itemId, newMedia.fileObj);
           finalUrl = base64Data || URL.createObjectURL(newMedia.fileObj);
+          hasStoredFile = true;
+          toast.success(`Saved "${newMedia.title}" persistently! (Configure R2 credentials in Vercel for Cloud sync)`);
+        } catch (localErr) {
+          finalUrl = URL.createObjectURL(newMedia.fileObj);
           hasStoredFile = true;
         }
       }

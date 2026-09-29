@@ -53,6 +53,40 @@ export async function getPresignedR2UploadUrl(fileName, fileType, mediaType = 'm
 }
 
 /**
+ * Upload file directly through Vercel Serverless API to Cloudflare R2
+ * Bypasses all browser CORS restrictions cleanly.
+ * @param {File} file 
+ * @param {string} mediaType 
+ * @returns {Promise<{ publicUrl: string, storagePath: string }>}
+ */
+export async function uploadFileToR2Serverless(file, mediaType = 'movie') {
+  const base64Data = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = (e) => reject(e);
+    reader.readAsDataURL(file);
+  });
+
+  const res = await fetch('/api/media/upload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      fileName: file.name,
+      fileType: file.type,
+      fileData: base64Data,
+      mediaType
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || `Serverless upload error (${res.status})`);
+  }
+
+  return await res.json();
+}
+
+/**
  * Direct browser upload to Cloudflare R2 using presigned URL
  * @param {File} file 
  * @param {string} presignedUploadUrl 
